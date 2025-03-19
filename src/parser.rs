@@ -22,8 +22,7 @@ pub struct WealthOfNations {
 
 impl WealthOfNations {
     pub fn new() -> Result<Self, WealthOfNationsError> {
-        // let file_path = Path::new("./data").join("wealth_of_nations");
-        let file_path = Path::new("./data").join("wealth_of_nations_book1");
+        let file_path = Path::new("./data").join("wealth_of_nations");
         let file = File::open(file_path)?;
         let mut reader = BufReader::new(file);
         let mut buffer = String::new();
@@ -46,7 +45,7 @@ impl WealthOfNations {
                     paragraphs: Vec::new(),
                 };
                 result.add_chapter(chapter);
-            } else if buffer.len() >= 70 {
+            } else if buffer.len() >= 70 && !result.books.last().unwrap().chapters.is_empty() {
                 let paragraph = WealthOfNationsParagraph {
                     content: buffer.trim().to_string(),
                 };
