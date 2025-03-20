@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::llm::{LLMError, LLM};
+use crate::macros::retry;
 use crate::parser::{
     WealthOfNations, WealthOfNationsBook, WealthOfNationsChapter, WealthOfNationsError,
     WealthOfNationsParagraph,
@@ -101,14 +102,19 @@ Write a structured summary of the book. Start with a direct statement about its 
             chapter_summaries
         );
 
-        let notes: BookNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
+        let notes = retry! {
+            async {
+                self.llm.generate_string(&prompt).await
+            }.await
+        }
+        .context(LLMSnafu)?;
 
-        file.write_all(notes.summary.as_bytes())?;
+        file.write_all(notes.as_bytes())?;
         file.write_all("\n\n".as_bytes())?;
         file.write_all(chapter_summaries.as_bytes())?;
 
         log::info!("Summary of the book:");
-        log::info!("{}", notes.summary);
+        log::info!("{}", notes);
 
         Ok(())
     }
@@ -122,7 +128,7 @@ Write a structured summary of the book. Start with a direct statement about its 
 
         for paragraph in &chapter.paragraphs {
             let summary = self
-                .summarize_paragraph(&paragraph_summaries, paragraph)
+                .summarize_paragraph(&chapter.title, &paragraph_summaries, paragraph)
                 .await?;
             paragraph_summaries.push_str(&summary);
             paragraph_summaries.push_str("\n\n");
@@ -148,13 +154,18 @@ Write a detailed but concise summary of the current chapter. The summary should 
 - Include any significant counterarguments or critiques mentioned in the chapter, as well as the author's response to them.
 - Conclude by explaining the overall significance of this chapter in the context of the book.
 
-Ensure that the summary is under 1000 words."#,
+Ensure that the summary is under 100 words."#,
             previous_summaries, paragraph_summaries
         );
 
-        let notes: ChapterNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
+        let notes = retry! {
+            async {
+                self.llm.generate_string(&prompt).await
+            }.await
+        }
+        .context(LLMSnafu)?;
 
-        let result = format!("{}\n\n{}", chapter.title, notes.summary);
+        let result = format!("{}\n\n{}", chapter.title, notes);
 
         log::info!("{}", result);
 
@@ -163,6 +174,7 @@ Ensure that the summary is under 1000 words."#,
 
     async fn summarize_paragraph(
         &self,
+        chapter_title: &str,
         previous_summaries: &str,
         paragraph: &WealthOfNationsParagraph,
     ) -> Result<String, ReaderError> {
@@ -173,6 +185,10 @@ Ensure that the summary is under 1000 words."#,
 - Focus on specific concepts, examples, or details provided in the paragraph. Avoid vague language or generalities.
 - Maintain a structured and objective tone. Do not start with phrases like "The paragraph explains" as they are redundant.
 - Summarize the paragraph's contribution to the chapter's overall message, without adding unnecessary repetition.
+- Consider the chapter title when summarizing. Explain how the paragraph contributes to the chapter's overall theme or argument.
+
+### Chapter Title:
+{}
 
 ### Previous Summaries:
 {}
@@ -181,14 +197,19 @@ Ensure that the summary is under 1000 words."#,
 {}
 
 ### Summary:"#,
-            previous_summaries, paragraph.content
+            chapter_title, previous_summaries, paragraph.content
         );
 
-        let notes: ParagraphNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
+        let notes = retry! {
+            async {
+                self.llm.generate_string(&prompt).await
+            }.await
+        }
+        .context(LLMSnafu)?;
 
-        log::debug!("{}", notes.summary);
+        log::debug!("{}", notes);
 
-        Ok(notes.summary)
+        Ok(notes)
     }
 }
 
