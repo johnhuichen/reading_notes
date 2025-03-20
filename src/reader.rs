@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::llm::{LLMError, LLM};
+use crate::macros::retry;
 use crate::parser::{
     WealthOfNations, WealthOfNationsBook, WealthOfNationsChapter, WealthOfNationsError,
     WealthOfNationsParagraph,
@@ -70,6 +71,16 @@ impl WealthOfNationsReader {
         }
     }
 
+    fn prompt_guide_line() -> String {
+        r#"
+- Summarize concisely without adding introductory phrases like 'Here is a summary of the ...' or 'In summary:'. Provide only the summary itself without prefatory sentences.
+- Maintain a professional tone.
+- Do not end by asking a question.
+- Strive to be clear and concise.
+"#
+        .to_string()
+    }
+
     async fn summarize_book(&self, book: &WealthOfNationsBook) -> Result<(), ReaderError> {
         log::info!("{}", book.title);
 
@@ -79,116 +90,116 @@ impl WealthOfNationsReader {
         file.write_all("\n\n".as_bytes())?;
 
         for chapter in &book.chapters {
-            let summary = self.summarize_chapter(&chapter_summaries, chapter).await?;
+            let summary = self.summarize_chapter(chapter).await?;
             chapter_summaries.push_str(&summary);
-            chapter_summaries.push_str("\n\n");
         }
 
-        let prompt = format!(
-            r#"You are an expert book reader summarizing a book. You have summarized each chapter in this book.
+        //         let prompt = format!(
+        //             r#"You are an expert book reader.
+        //
+        // Instructions:
+        // You are given the summaries of each chapter in a book. Your task is to write summary of the book.
+        //
+        // Chapter Summaries:
+        // {}"
+        //
+        // Guidelines:
+        // {}"#,
+        //             chapter_summaries,
+        //             Self::prompt_guide_line(),
+        //         );
+        //
+        //         let summary = retry! {
+        //             async {
+        //                 self.llm.generate_string(&prompt).await
+        //             }.await
+        //         }
+        //         .context(LLMSnafu)?;
 
-Below are the chapter summaries of the book. Use them to write a clear, concise, and well-structured summary of the book.
+        // file.write_all(summary.as_bytes())?;
+        // file.write_all("\n\n".as_bytes())?;
+        // file.write_all(chapter_summaries.as_bytes())?;
 
-### Guidelines:
-- Identify the book’s main themes, key arguments, and overall message.
-- Maintain a professional and informative tone.
-
-### Chapter Summaries:
-{}
-
-### Book Summary:
-Write a structured summary of the book. Start with a direct statement about its main idea, then summarize the key points, and conclude with its overall significance or takeaway."#,
-            chapter_summaries
-        );
-
-        let notes: BookNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
-
-        file.write_all(notes.summary.as_bytes())?;
-        file.write_all("\n\n".as_bytes())?;
-        file.write_all(chapter_summaries.as_bytes())?;
-
-        log::info!("Summary of the book:");
-        log::info!("{}", notes.summary);
+        // log::info!("Summary of the book:");
+        // log::info!("{}", summary);
 
         Ok(())
     }
 
     async fn summarize_chapter(
         &self,
-        previous_summaries: &str,
         chapter: &WealthOfNationsChapter,
     ) -> Result<String, ReaderError> {
         let mut paragraph_summaries = String::new();
+        let mut file = OpenOptions::new().append(true).open(&self.summary_path)?;
 
         for paragraph in &chapter.paragraphs {
-            let summary = self
-                .summarize_paragraph(&paragraph_summaries, paragraph)
-                .await?;
+            let summary = self.summarize_paragraph(paragraph).await?;
             paragraph_summaries.push_str(&summary);
-            paragraph_summaries.push_str("\n\n");
         }
 
         let prompt = format!(
-            r#"You are an expert book reader summarizing a chapter. You have summarized each paragraph in this chapter, and you may also have summaries of previous chapters for context.
+            r#"You are an expert book reader.
 
-Below are the summaries of previous chapters, followed by the paragraph summaries of the current chapter. Use them to write a detailed, structured, and insightful summary of the current chapter.
+Instructions:
+You are given the content of a chapter. Your task is to write a summary of the chapter.
 
-### Previous Chapter Summaries:
+Content of Chapter:
 {}
 
-### Paragraph Summaries for Current Chapter:
-{}
-
-### Chapter Summary:
-Write a detailed but concise summary of the current chapter. The summary should be comprehensive, covering the key points, examples, and arguments, but avoid unnecessary repetition or overly broad statements.
-
-- Start with a clear and direct statement of the main argument. What is the core idea or thesis?
-- Provide detailed explanations for key concepts.
-- Analyze the cause-and-effect relationships presented in the chapter.
-- Include any significant counterarguments or critiques mentioned in the chapter, as well as the author's response to them.
-- Conclude by explaining the overall significance of this chapter in the context of the book.
-
-Ensure that the summary is under 1000 words."#,
-            previous_summaries, paragraph_summaries
+Guidelines:
+- Summarize the chapter in under 300 words and keep everything in one paragraph.
+{}"#,
+            paragraph_summaries,
+            Self::prompt_guide_line(),
         );
 
-        let notes: ChapterNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
+        let summary = retry! {
+            async {
+                self.llm.generate_string(&prompt).await
+            }.await
+        }
+        .context(LLMSnafu)?;
 
-        let result = format!("{}\n\n{}", chapter.title, notes.summary);
+        let result = format!("{}\n\n{}\n\n", chapter.title, summary);
 
         log::info!("{}", result);
+        file.write_all(result.as_bytes())?;
 
         Ok(result)
     }
 
     async fn summarize_paragraph(
         &self,
-        previous_summaries: &str,
         paragraph: &WealthOfNationsParagraph,
     ) -> Result<String, ReaderError> {
         let prompt = format!(
-            r#"You are an expert book reader summarizing a chapter, paragraph by paragraph. Your goal is to write a clear, concise, and professional summary of the current paragraph in one to three sentences.
+            r#"You are an expert book.
 
-- Identify the key idea or main argument presented in the paragraph.
-- Focus on specific concepts, examples, or details provided in the paragraph. Avoid vague language or generalities.
-- Maintain a structured and objective tone. Do not start with phrases like "The paragraph explains" as they are redundant.
-- Summarize the paragraph's contribution to the chapter's overall message, without adding unnecessary repetition.
+Instructions:
+You are given the content of a paragraph. Your task is to write a summary.
 
-### Previous Summaries:
+Content of Paragraph:
 {}
 
-### Current Paragraph:
-{}
-
-### Summary:"#,
-            previous_summaries, paragraph.content
+Guidelines:
+- Summarize the paragraph in ONE sentence.
+{}"#,
+            paragraph.content,
+            Self::prompt_guide_line()
         );
 
-        let notes: ParagraphNotes = self.llm.generate(&prompt).await.context(LLMSnafu)?;
+        let summary = retry! {
+            async {
+                self.llm.generate_string(&prompt).await
+            }.await
+        }
+        .context(LLMSnafu)?;
 
-        log::debug!("{}", notes.summary);
+        let result = format!("{}\n\n", summary);
+        log::info!("{}", result);
 
-        Ok(notes.summary)
+        Ok(result)
     }
 }
 

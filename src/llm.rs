@@ -33,6 +33,17 @@ impl LLM {
         LLM { ollama, model }
     }
 
+    pub async fn generate_string(&self, prompt: &str) -> Result<String, LLMError> {
+        let res = self
+            .ollama
+            .generate(GenerationRequest::new(self.model.to_string(), prompt))
+            .await
+            .context(OllamaSnafu)?;
+
+        Ok(res.response)
+    }
+
+    #[allow(dead_code)]
     pub async fn generate<T: JsonSchema + DeserializeOwned>(
         &self,
         prompt: &str,

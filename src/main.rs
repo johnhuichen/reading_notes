@@ -4,6 +4,7 @@ use self::reader::{Reader, WealthOfNationsReader};
 
 mod llm;
 mod logger;
+mod macros;
 mod parser;
 mod reader;
 
@@ -15,6 +16,6 @@ async fn main() -> Result<(), Whatever> {
     reader
         .summarize()
         .await
-        .whatever_context("Failed to summarized")?;
+        .whatever_context("Failed to summarize")?;
     Ok(())
 }
